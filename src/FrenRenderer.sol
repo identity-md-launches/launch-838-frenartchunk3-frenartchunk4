@@ -332,10 +332,26 @@ contract FrenRenderer {
             len := and(shr(216, w), 0xffff) // bytes 3-4
         }
         address p = [chunk1, chunk2, chunk3, chunk4, chunk5, chunk6, chunk7][c];
-        if (p.code.length < 1 + off + len) revert Missing();
         data = new bytes(len);
+        if ((FrenArtIndex.FRAMED >> c) & 1 == 0) {
+            if (p.code.length < 1 + off + len) revert Missing();
+            assembly ("memory-safe") {
+                extcodecopy(p, add(data, 32), add(1, off), len)
+            }
+            return data;
+        }
+        // framed: art byte j sits at 1 + (j / 32) * 33 + 1 + j % 32, after each frame's PUSH32 byte
+        uint256 first = off / 32;
+        uint256 frames = (off + len - 1) / 32 - first + 1;
+        if (p.code.length < 1 + (first + frames) * 33) revert Missing();
+        bytes memory raw = new bytes(frames * 33);
+        bytes memory flat = new bytes(frames * 32);
         assembly ("memory-safe") {
-            extcodecopy(p, add(data, 32), add(1, off), len)
+            extcodecopy(p, add(raw, 32), add(1, mul(first, 33)), mul(frames, 33))
+            for { let k := 0 } lt(k, frames) { k := add(k, 1) } {
+                mcopy(add(add(flat, 32), mul(k, 32)), add(add(raw, 33), mul(k, 33)), 32)
+            }
+            mcopy(add(data, 32), add(add(flat, 32), mod(off, 32)), len)
         }
     }
 }

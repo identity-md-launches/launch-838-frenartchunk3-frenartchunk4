@@ -158,4 +158,19 @@ contract FrenRendererTest is Test {
         new FrenRenderer(chunks[0], chunks[1], chunks[2], chunks[3], chunks[4], chunks[5], address(0xBEEF));
         assertEq(r.chunk7(), chunks[6]);
     }
+
+    /// @dev IMD's launch admission reads code as instructions (PUSH data skipped) and refuses CALLCODE, DELEGATECALL
+    ///      and SELFDESTRUCT bytes even in code that never runs: every chunk must read clean
+    function test_ChunksPassTheAdmissionScan() public view {
+        for (uint256 k; k < 7; ++k) {
+            bytes memory code = chunks[k].code;
+            uint256 hits;
+            for (uint256 i; i < code.length; ++i) {
+                uint8 op = uint8(code[i]);
+                if (op == 0xf2 || op == 0xf4 || op == 0xff) ++hits;
+                if (op >= 0x60 && op <= 0x7f) i += op - 0x5f;
+            }
+            assertEq(hits, 0, string.concat("chunk ", vm.toString(k + 1)));
+        }
+    }
 }

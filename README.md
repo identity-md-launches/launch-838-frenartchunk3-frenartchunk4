@@ -6,8 +6,13 @@ IMD swarm can deploy them with IMD's `evm_contracts` launch: constructors only, 
 - `src/FrenArtChunks.sol`: `FrenArtChunk1..7`, data contracts. Each one's code is a STOP byte (calling it does nothing)
   followed by up to 24,575 bytes of art: 69 layers (13 faces per character, 3 lab coats, 2 hats, 15 items,
   10 backgrounds) and a 256-colour palette, 141.6 KB in all.
-- `src/FrenArtIndex.sol`: where every layer sits (chunk, offset, length), the colour tables, the face table, and each
-  chunk's code hash.
+- `src/FrenArtIndex.sol`: where every layer sits (chunk, offset, length), the colour tables, the face table, each
+  chunk's code hash, and which chunks are framed.
+
+IMD's launch admission reads every contract's code as instructions and refuses CALLCODE, DELEGATECALL and SELFDESTRUCT
+bytes, even in code that can never run. Where a chunk's art happens to show one (chunks 4 and 7), the chunk is stored
+framed: a PUSH32 byte before every 32 bytes of art, so the code reads as nothing but PUSH data. The renderer strips the
+frames as it reads; `test_ChunksPassTheAdmissionScan` runs the same scan over every chunk.
 - `src/FrenRenderer.sol`: draws a fren from its combo and seed: an 84x84 8-bit bitmap inside an SVG, with its traits,
   as `tokenURI(tokenId, combo, seed)` and `pendingURI(tokenId)`. Its constructor takes the seven chunks and checks each
   one's code hash, so it can only ever draw this art. No owner, nothing to configure, nothing that changes.
@@ -28,8 +33,10 @@ launch with a renderer of their own; once this one is deployed and checked on ch
 - `test_SameAsTheLaunchRenderer`: byte for byte the same `tokenURI`, `pendingURI`, attributes and canvases as the
   renderer the frens launch with (`test/ref/FrenRendererRef.sol`);
 - `test_LaunchesFitTransactions`: each of the three launches below fits one transaction under EIP-7825's cap
-  (2^24 gas): about 10.7M, 9.8M and 13.7M gas with calldata;
-- `test_TakesOnlyThisArt`: the renderer refuses other chunks, or these in another order.
+  (2^24 gas): about 10.7M, 10.0M and 13.9M gas with calldata;
+- `test_TakesOnlyThisArt`: the renderer refuses other chunks, or these in another order;
+- `test_ChunksPassTheAdmissionScan`: no chunk shows a refused opcode;
+- `test/OnChainChunks.fork.t.sol` (MAINNET_RPC_URL): the chunks already deployed (launch #819) draw the reference.
 
 ## The three launches (`evm_contracts`, Ethereum mainnet)
 

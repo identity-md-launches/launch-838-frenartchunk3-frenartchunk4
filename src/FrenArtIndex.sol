@@ -10,6 +10,8 @@ library FrenArtIndex {
     uint256 internal constant LAYERS = 69;
     uint256 internal constant FACE_LAYERS = 39;
     uint8 internal constant SHADOW = 2;
+    /// @dev bit k set: chunk k+1 keeps its art in frames, a PUSH32 byte before every 32 bytes (see script/art/chunks.py)
+    uint256 internal constant FRAMED = 72;
     bytes internal constant INDEX =
         hex"000000068a00068a0676000d00069800139806bc001a5406b000210406820027860666002dec06a800349406a0003b34063800416c06640047d006dc004eac06"
         hex"9200553e08820100000886010886087e01110408c60119ca088a0122540886012ada085a01333408ca013bfe08b40144b20872014d24087e0155a208a8020000"
@@ -18,13 +20,13 @@ library FrenArtIndex {
         hex"238c00e603247200d203254400d203261600980326ae01520328000152032952008e0329e00116032af613ce033ec41176040000126a04126a1d980430021bc8"
         hex"0500001f8e051f8e20ca0540581344060000161406161407be061dd20400";
     /// @dev each chunk's code size, 2 bytes big-endian: the renderer checks the chunks it's given
-    bytes internal constant CHUNK_SIZES = hex"5dc15e4b5bb7503b4bcb539d21d3";
+    bytes internal constant CHUNK_SIZES = hex"5dc15e4b5bb752c34bcb539d22f0";
     /// @dev each chunk's code hash (keccak256 of its code): the renderer takes only these chunks
     bytes internal constant CHUNK_HASHES =
         hex"f86a2decc7ef9279e69b3204890ef49c0099ea7a3b8b1a471019e23638fe2d4b8579d215b59ec2dbbae55d5dd85ebf64a69e529049a26e66401679b8666c650e"
-        hex"d73ecfd95e853d3bf20224d02e30889477ac2627bc1970c5e6b0ca5ef202c9a84412839e8ffb01f255ce07ec70fc6c55a67a78f4365ae2a71eaa4f4d8645a5aa"
+        hex"d73ecfd95e853d3bf20224d02e30889477ac2627bc1970c5e6b0ca5ef202c9a854bd89d96a8e4b1a1530687bb8442321920166014b5b7a89a414bae379f1a49b"
         hex"ea0847b342ad6817321f26d81359a88dc124efa9c80536f3fa6bbf0af7582e4c73bde73579c30beebc346a7da3e86c0bb2bec3356b83feb3f55938b0de5e3a93"
-        hex"9f4380f92f4ee719e250bf6a9494f3a27dda086d5c2960b91343842f22b41610";
+        hex"1925eee965d1ddd4ef8041b0f0a042304bebcc74ba605d1bb3bea5a0675cb700";
     /// @dev lens 4x2, coat 3x5, shirt 6: palette indices
     bytes internal constant TABLES = hex"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d";
     /// @dev the layer of character c's face f at c * 13 + f
