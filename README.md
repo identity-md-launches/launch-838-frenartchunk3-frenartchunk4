@@ -32,11 +32,20 @@ launch with a renderer of their own; once this one is deployed and checked on ch
 - `test_MatchesTheReference`: bitmaps identical to the art kit's reference renderer (`expected.json`);
 - `test_SameAsTheLaunchRenderer`: byte for byte the same `tokenURI`, `pendingURI`, attributes and canvases as the
   renderer the frens launch with (`test/ref/FrenRendererRef.sol`);
-- `test_LaunchesFitTransactions`: each of the three launches below fits one transaction under EIP-7825's cap
-  (2^24 gas): about 10.7M, 10.0M and 13.9M gas with calldata;
+- `test_LaunchesFitTransactions`: each launch's modeled gas budget stays 5% below EIP-7825's cap (2^24 gas):
+  about 10.82M, 10.08M and 14.06M gas, including code deposit and calldata;
+- `test_Launch2GasIncludesCodeDeposit`, `test_GasBudgetRejectsOversizedBatch`: the budget includes launch 2's
+  8,933,200-gas code deposit and rejects a batch whose code deposit alone exceeds the transaction cap;
+- `test_Launch2ThroughCreate2`: deploys chunks 3 and 4 in order with zero ETH and no constructor arguments,
+  checking exact runtime bytes, the STOP prefix, inert calls and chunk 4's PUSH32 frames;
 - `test_TakesOnlyThisArt`: the renderer refuses other chunks, or these in another order;
 - `test_ChunksPassTheAdmissionScan`: no chunk shows a refused opcode;
 - `test/OnChainChunks.fork.t.sol` (MAINNET_RPC_URL): the chunks already deployed (launch #819) draw the reference.
+
+The gas budget adds explicit code-deposit, creation and initcode-word charges to the Foundry-metered execution
+cost, since Foundry 1.8.3 omits code deposit from the original `gasleft()` measurement. It prices initcode calldata
+at 16 gas/byte and reserves another 1 KiB of calldata and 100,000 gas for factory overhead. These are rehearsal
+budgets, not mainnet receipts; the deployment service must still simulate the actual signed factory transaction.
 
 ## The three launches (`evm_contracts`, Ethereum mainnet)
 

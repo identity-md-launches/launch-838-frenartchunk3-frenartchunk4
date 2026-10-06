@@ -4,7 +4,13 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {FrenRenderer} from "../src/FrenRenderer.sol";
 import {
-    FrenArtChunk1, FrenArtChunk2, FrenArtChunk3, FrenArtChunk4, FrenArtChunk5, FrenArtChunk6, FrenArtChunk7
+    FrenArtChunk1,
+    FrenArtChunk2,
+    FrenArtChunk3,
+    FrenArtChunk4,
+    FrenArtChunk5,
+    FrenArtChunk6,
+    FrenArtChunk7
 } from "../src/FrenArtChunks.sol";
 import {FrenArtRef, FrenRendererRef} from "./ref/FrenRendererRef.sol";
 
@@ -21,11 +27,25 @@ contract ImdStyleArtLaunches {
         c4 = address(new FrenArtChunk4());
     }
 
-    function launch3(address c1, address c2, address c3, address c4) external returns (address c5, address c6, address c7, address r) {
+    function launch3(address c1, address c2, address c3, address c4)
+        external
+        returns (address c5, address c6, address c7, address r)
+    {
         c5 = address(new FrenArtChunk5());
         c6 = address(new FrenArtChunk6());
         c7 = address(new FrenArtChunk7());
         r = address(new FrenRenderer(c1, c2, c3, c4, c5, c6, c7));
+    }
+}
+
+/// @dev Rehearse the protected floor's zero-value CREATE2 with initcode supplied by the caller.
+contract ArtDeploymentProbe {
+    function deploy(bytes memory code, bytes32 salt) external returns (address deployed) {
+        require(code.length > 0 && code.length <= 49_152, "invalid initcode");
+        assembly ("memory-safe") {
+            deployed := create2(0, add(code, 32), mload(code), salt)
+        }
+        require(deployed != address(0) && deployed.code.length > 0, "constructor failed");
     }
 }
 
@@ -38,26 +58,41 @@ contract FrenRendererTest is Test {
     FrenRenderer r;
     FrenRendererRef ref;
     address[7] chunks;
-    uint256[3] launchGas;
+    uint256[3] launchExecutionGas;
     uint256[3] launchInitBytes;
+    uint256[3] launchCreationGas;
 
     function setUp() public {
         ImdStyleArtLaunches f = new ImdStyleArtLaunches();
         uint256 g = gasleft();
         (chunks[0], chunks[1]) = f.launch1();
-        launchGas[0] = g - gasleft();
+        launchExecutionGas[0] = g - gasleft();
         g = gasleft();
         (chunks[2], chunks[3]) = f.launch2();
-        launchGas[1] = g - gasleft();
+        launchExecutionGas[1] = g - gasleft();
         g = gasleft();
         address rr;
         (chunks[4], chunks[5], chunks[6], rr) = f.launch3(chunks[0], chunks[1], chunks[2], chunks[3]);
-        launchGas[2] = g - gasleft();
+        launchExecutionGas[2] = g - gasleft();
         r = FrenRenderer(rr);
-        launchInitBytes[0] = type(FrenArtChunk1).creationCode.length + type(FrenArtChunk2).creationCode.length;
-        launchInitBytes[1] = type(FrenArtChunk3).creationCode.length + type(FrenArtChunk4).creationCode.length;
-        launchInitBytes[2] = type(FrenArtChunk5).creationCode.length + type(FrenArtChunk6).creationCode.length
-            + type(FrenArtChunk7).creationCode.length + type(FrenRenderer).creationCode.length + 7 * 32;
+        uint256[8] memory initBytes = [
+            type(FrenArtChunk1).creationCode.length,
+            type(FrenArtChunk2).creationCode.length,
+            type(FrenArtChunk3).creationCode.length,
+            type(FrenArtChunk4).creationCode.length,
+            type(FrenArtChunk5).creationCode.length,
+            type(FrenArtChunk6).creationCode.length,
+            type(FrenArtChunk7).creationCode.length,
+            type(FrenRenderer).creationCode.length + 7 * 32
+        ];
+        for (uint256 i; i < initBytes.length; ++i) {
+            uint256 launch = i < 2 ? 0 : i < 4 ? 1 : 2;
+            uint256 runtimeBytes = i < 7 ? chunks[i].code.length : rr.code.length;
+            assertLe(initBytes[i], 49_152, "EIP-3860 initcode limit");
+            assertLe(runtimeBytes, 24_576, "EIP-170 runtime limit");
+            launchInitBytes[launch] += initBytes[i];
+            launchCreationGas[launch] += _creationGas(initBytes[i], runtimeBytes);
+        }
         ref = _reference();
     }
 
@@ -75,8 +110,11 @@ contract FrenRendererTest is Test {
         bytes[] memory pal = new bytes[](1);
         pal[0] = vm.readFileBinary(string.concat(ART, "palette.bin"));
         return new FrenRendererRef(
-            art.write(pal)[0], ptrs, vm.readFileBinary(string.concat(ART, "tables.bin")),
-            vm.readFileBinary(string.concat(ART, "facetable.bin")), uint8(vm.parseJsonUint(manifest, ".shadow"))
+            art.write(pal)[0],
+            ptrs,
+            vm.readFileBinary(string.concat(ART, "tables.bin")),
+            vm.readFileBinary(string.concat(ART, "facetable.bin")),
+            uint8(vm.parseJsonUint(manifest, ".shadow"))
         );
     }
 
@@ -85,7 +123,9 @@ contract FrenRendererTest is Test {
         uint256[8] memory n = [uint256(3), 13, 4, 3, 6, 3, 10, 16];
         uint256[8] memory shift = [uint256(0), 2, 6, 8, 10, 13, 15, 19];
         uint256 c;
-        for (uint256 t; t < 8; ++t) c |= ((uint256(keccak256(abi.encode(x, t))) % n[t]) << shift[t]);
+        for (uint256 t; t < 8; ++t) {
+            c |= ((uint256(keccak256(abi.encode(x, t))) % n[t]) << shift[t]);
+        }
         return uint24(c);
     }
 
@@ -109,7 +149,11 @@ contract FrenRendererTest is Test {
         for (uint256 i; i < 24; ++i) {
             uint24 combo = _combo(i);
             uint256 seed = uint256(keccak256(abi.encode("seed", i)));
-            assertEq(keccak256(bytes(r.tokenURI(i + 1, combo, seed))), keccak256(bytes(ref.tokenURI(i + 1, combo, seed))), "tokenURI");
+            assertEq(
+                keccak256(bytes(r.tokenURI(i + 1, combo, seed))),
+                keccak256(bytes(ref.tokenURI(i + 1, combo, seed))),
+                "tokenURI"
+            );
         }
         for (uint256 bg; bg < 10; ++bg) {
             uint24 combo = uint24(_combo(100 + bg) & ~uint256(15 << 15) | bg << 15);
@@ -122,7 +166,8 @@ contract FrenRendererTest is Test {
     }
 
     function test_RejectsCombosOutsideTheArt() public {
-        uint24[6] memory bad = [uint24(3), uint24(13 << 2), uint24(3 << 8), uint24(6 << 10), uint24(3 << 13), uint24(10 << 15)];
+        uint24[6] memory bad =
+            [uint24(3), uint24(13 << 2), uint24(3 << 8), uint24(6 << 10), uint24(3 << 13), uint24(10 << 15)];
         for (uint256 i; i < bad.length; ++i) {
             vm.expectRevert(); // Missing, or an out-of-range read of the index
             r.canvas(bad[i], 0);
@@ -141,12 +186,69 @@ contract FrenRendererTest is Test {
 
     /* ── the launches ────────────────────────────────────────────── */
 
-    /// @dev Each launch, with a transaction's base cost and its initcode as calldata, under the per-transaction cap
+    /// @dev Mandatory creation charges, independent of Foundry's CREATE metering. Round each contract separately.
+    ///      EIP-3860 charges 2 gas/initcode word; EIP-1014 adds 6 for CREATE2 hashing.
+    function _creationGas(uint256 initBytes, uint256 runtimeBytes) internal pure returns (uint256) {
+        return 32_000 + 200 * runtimeBytes + 8 * ((initBytes + 31) / 32);
+    }
+
+    /// @dev Conservative budget for this rehearsal, not a receipt from the production factory.
+    ///      Foundry 1.8.3 omits code deposit from gasleft() around these CREATEs. Always add full creation costs;
+    ///      any creation charges already metered are harmless double counting. Budget all calldata at 16 gas/byte,
+    ///      plus 1 KiB for ABI/signature data and 100k for factory work beyond the rehearsal. The final signed
+    ///      transaction still needs deployment-service simulation against the actual factory.
+    function _transactionGasBound(uint256 executionGas, uint256 initBytes, uint256 creationGas)
+        internal
+        pure
+        returns (uint256)
+    {
+        return 21_000 + executionGas + creationGas + 16 * (initBytes + 1024) + 100_000;
+    }
+
+    /// @dev Each launch retains 5% headroom below the per-transaction cap under the documented budget.
     function test_LaunchesFitTransactions() public {
         for (uint256 i; i < 3; ++i) {
-            uint256 total = launchGas[i] + 21_000 + 16 * launchInitBytes[i];
-            emit log_named_uint(string.concat("launch ", vm.toString(i + 1), " gas (with calldata)"), total);
+            uint256 total = _transactionGasBound(launchExecutionGas[i], launchInitBytes[i], launchCreationGas[i]);
+            emit log_named_uint(string.concat("launch ", vm.toString(i + 1), " gas budget (with code deposit)"), total);
             assertLt(total, TX_CAP * 95 / 100);
+        }
+    }
+
+    /// @dev Regression for the audit: launch 2's deposit alone is 8,933,200 gas, even if execution meters as zero.
+    function test_Launch2GasIncludesCodeDeposit() public view {
+        uint256 deposit = 200 * (chunks[2].code.length + chunks[3].code.length);
+        assertEq(deposit, 8_933_200);
+        assertGe(_transactionGasBound(0, launchInitBytes[1], launchCreationGas[1]), deposit + 2 * 32_000 + 21_000);
+    }
+
+    /// @dev Four individually legal chunk-3 deployments cannot fit a transaction: deposit alone exceeds the cap.
+    ///      The budget must reject this batch even when Foundry reports no execution gas.
+    function test_GasBudgetRejectsOversizedBatch() public view {
+        uint256 initBytes = type(FrenArtChunk3).creationCode.length;
+        uint256 total = _transactionGasBound(0, 4 * initBytes, 4 * _creationGas(initBytes, chunks[2].code.length));
+        assertGt(total, TX_CAP);
+    }
+
+    /// @dev Launch 2 uses these exact, argument-free constructors, in order, through the protected CREATE2 path.
+    function test_Launch2ThroughCreate2() public {
+        ArtDeploymentProbe factory = new ArtDeploymentProbe();
+        bytes[2] memory initCode = [type(FrenArtChunk3).creationCode, type(FrenArtChunk4).creationCode];
+        for (uint256 i; i < initCode.length; ++i) {
+            address deployed = factory.deploy(initCode[i], bytes32(i));
+            bytes memory code = deployed.code;
+            // setUp's renderer constructor independently checks these reference deployments against FrenArtIndex.
+            assertEq(code, chunks[i + 2].code, "exact art runtime");
+            assertEq(code[0], bytes1(0), "STOP prefix");
+            assertEq(deployed.balance, 0);
+            (bool ok, bytes memory result) = deployed.call(hex"ffffffff");
+            assertTrue(ok, "calling data must stop");
+            assertEq(result.length, 0);
+            if (i == 1) {
+                assertEq((code.length - 1) % 33, 0, "complete frames");
+                for (uint256 j = 1; j < code.length; j += 33) {
+                    assertEq(code[j], bytes1(0x7f), "PUSH32 frame");
+                }
+            }
         }
     }
 
