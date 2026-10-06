@@ -1,0 +1,14 @@
+{
+  "kind": "evm_contracts",
+  "contracts": [
+    {
+      "contract": "FrenArtChunk3",
+      "constructorArgs": []
+    },
+    {
+      "contract": "FrenArtChunk4",
+      "constructorArgs": []
+    }
+  ],
+  "notes": "Part 2 of 3 of the IMD6900 Frens on-chain art: deploy FrenArtChunk3, then FrenArtChunk4, from src/FrenArtChunks.sol with no constructor arguments. Preserve the repository's generated art bytes exactly, including the STOP prefix and FrenArtChunk4's PUSH32 framing, to match the code hashes in src/FrenArtIndex.sol. Part 1 is IMD launch #819; the remaining chunks and FrenRenderer are deployed in part 3."
+}
