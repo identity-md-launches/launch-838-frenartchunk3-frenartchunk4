@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// The renderer the frens launch with (IDMD-Strategy-frens src/frens/FrenRenderer.sol at 2047c36), renamed: the tests check
+// The renderer the frens launch with (IDMD-Strategy-frens src/frens/FrenRenderer.sol), renamed: the tests check
 // the chunk renderer draws and describes every fren exactly as this one does.
 pragma solidity ^0.8.26;
 
@@ -68,11 +68,12 @@ contract FrenRendererRef {
     uint256 internal constant FACES = 13; // per character
     uint256 internal constant REST = 30; // the layers after the faces: 3 coats, 2 hats, 15 items, 10 backgrounds
 
-    uint256 internal constant PENDING_BG = 7; // an unrevealed fren is a silhouette in the terminal
+    uint256 internal constant PENDING_BG = 3; // an unrevealed fren: greyed out, in front of the machine wall
+    uint256 internal constant PENDING_FRAMES = 4; // …flicking through this many random frens, the swarm still deciding
 
     address public immutable palette;
     uint256 public immutable faceLayers;
-    uint8 public immutable shadow; // the palette's dark lens green: an unrevealed fren's silhouette
+    uint8 public immutable shadow; // the palette's dark lens green (the art's own; part of the deploy's art check)
     address[] internal _layers;
     bytes internal _tables; // lens 4x2, coat 3x5, shirt 6: palette indices
     bytes internal _faceTable; // 39: the layer of character c's face f at c * 13 + f
@@ -118,28 +119,54 @@ contract FrenRendererRef {
         return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
     }
 
-    /// @notice A fren minted but not revealed yet: its silhouette in the terminal, until the agents' job lands
+    /// @notice A fren minted but not revealed yet: greyed out, flicking through random frens, until the agents' job lands
     function pendingURI(uint256 tokenId) external view returns (string memory) {
         string memory json = string.concat(
             '{"name":"IMD6900 Fren #',
             tokenId.toString(),
             '","description":"Minted, not revealed yet: five agents in the IMD swarm are building this fren, and it reveals on chain when their job lands. Backed by the floor all along.","image":"',
-            _svg(_bmp(silhouette(tokenId))),
+            _svgFrames(_bmpOf(unrevealed(tokenId), PENDING_FRAMES, true)),
             '","attributes":[{"trait_type":"Status","value":"Unrevealed"}]}'
         );
         return string.concat("data:application/json;base64,", Base64.encode(bytes(json)));
     }
 
-    /// @notice An unrevealed fren's pixels: the classic pepe and its coat in one flat green, on the terminal background
-    ///         through a window its token id picks
-    function silhouette(uint256 tokenId) public view returns (bytes memory cv) {
-        uint8[8] memory slot;
+    /// @notice An unrevealed fren's pixels: PENDING_FRAMES random frens (any trait at any value: the swarm hasn't
+    ///         decided yet) in front of the machine wall, seen through a window its token id picks, stacked top to bottom.
+    ///         pendingURI shows them greyed out, one after another.
+    function unrevealed(uint256 tokenId) public view returns (bytes memory sheet) {
+        uint8[8] memory none;
         uint256 seed = uint256(keccak256(abi.encode(tokenId)));
-        uint256 f = faceLayers;
-        cv = new bytes(N * N);
-        _draw(cv, _read(_layers[f + 20 + PENDING_BG]), -int256(seed % 37), -int256((seed >> 8) % 37), slot, 0);
-        _draw(cv, _read(_layers[uint8(_faceTable[0])]), -int256(CX), -int256(CY), slot, shadow);
-        _draw(cv, _read(_layers[f]), -int256(CX), -int256(CY), slot, shadow);
+        bytes memory back = new bytes(N * N);
+        _draw(back, _read(_layers[faceLayers + 20 + PENDING_BG]), -int256(seed % 37), -int256((seed >> 8) % 37), none, 0);
+        sheet = new bytes(N * N * PENDING_FRAMES);
+        for (uint256 k; k < PENDING_FRAMES; ++k) {
+            bytes memory cv = bytes.concat(back); // the wall is drawn once, each frame starts from a copy
+            uint256 r = uint256(keccak256(abi.encode(seed, k)));
+            uint256 combo = (r % 3) | ((r >> 8) % FACES) << 2 | ((r >> 16) % 4) << 6 | ((r >> 24) % 3) << 8
+                | ((r >> 32) % 6) << 10 | ((r >> 40) % 3) << 13 | ((r >> 48) % 16) << 19;
+            _fren(cv, uint24(combo));
+            _copy(sheet, k * N * N, cv, 0, N * N);
+        }
+    }
+
+    /// @dev Frames stacked in one bitmap, shown one at a time on an uneven beat: a fren that won't sit still
+    function _svgFrames(bytes memory bitmap) internal pure returns (string memory) {
+        string memory h = (N * PENDING_FRAMES).toString();
+        return string.concat(
+            "data:image/svg+xml;base64,",
+            Base64.encode(
+                bytes(
+                    string.concat(
+                        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84 84" width="840" height="840">',
+                        '<image width="84" height="', h, '" style="image-rendering:pixelated" href="data:image/bmp;base64,',
+                        Base64.encode(bitmap),
+                        '"><animate attributeName="y" values="0;-84;-168;-252;-84" keyTimes="0;0.22;0.37;0.64;0.83" ',
+                        'dur="1.3s" calcMode="discrete" repeatCount="indefinite"/></image></svg>'
+                    )
+                )
+            )
+        );
     }
 
     function attributes(uint24 combo) public pure returns (string memory) {
@@ -212,29 +239,35 @@ contract FrenRendererRef {
 
     /// @notice The fren as an 84x84 8-bit bitmap (the palette's colours), rows bottom-up as BMP has them.
     function bmp(uint24 combo, uint256 seed) public view returns (bytes memory) {
-        return _bmp(canvas(combo, seed));
+        return _bmpOf(canvas(combo, seed), 1, false);
     }
 
-    function _bmp(bytes memory cv) internal view returns (bytes memory out) {
+    /// @dev `frames` canvases stacked top to bottom as one bitmap; `grey`: the palette turned to its own luminance, dimmed
+    function _bmpOf(bytes memory cv, uint256 frames, bool grey) internal view returns (bytes memory out) {
         bytes memory pal = _read(palette);
-        out = new bytes(54 + 1024 + N * N);
+        uint256 rows = N * frames;
+        out = new bytes(54 + 1024 + N * rows);
         // BITMAPFILEHEADER + BITMAPINFOHEADER, little endian
         _le(out, 0, 0x4d42, 2); // "BM"
         _le(out, 2, out.length, 4);
         _le(out, 10, 54 + 1024, 4);
         _le(out, 14, 40, 4);
         _le(out, 18, N, 4);
-        _le(out, 22, N, 4);
+        _le(out, 22, rows, 4);
         _le(out, 26, 1, 2);
         _le(out, 28, 8, 2);
-        _le(out, 34, N * N, 4);
+        _le(out, 34, N * rows, 4);
         _le(out, 46, 256, 4);
-        for (uint256 i; i < 1024; ++i) out[54 + i] = pal[i];
-        for (uint256 y; y < N; ++y) {
-            uint256 src = (N - 1 - y) * N;
-            uint256 dst = 54 + 1024 + y * N;
-            for (uint256 x; x < N; ++x) out[dst + x] = cv[src + x];
+        _copy(out, 54, pal, 0, 1024);
+        if (grey) {
+            for (uint256 i; i < 256; ++i) {
+                uint256 b = 54 + i * 4; // B G R 0
+                uint256 l = (uint256(uint8(out[b + 2])) * 77 + uint256(uint8(out[b + 1])) * 150 + uint256(uint8(out[b])) * 29) >> 8;
+                bytes1 v = bytes1(uint8(l * 3 / 5));
+                (out[b], out[b + 1], out[b + 2]) = (v, v, v);
+            }
         }
+        for (uint256 y; y < rows; ++y) _copy(out, 54 + 1024 + y * N, cv, (rows - 1 - y) * N, N);
     }
 
     /// @notice The fren's pixels, palette indices, top row first.
@@ -255,9 +288,25 @@ contract FrenRendererRef {
         slot[6] = uint8(t[eye * 2]);
         slot[7] = uint8(t[eye * 2 + 1]);
 
-        uint256 f = faceLayers;
         cv = new bytes(N * N);
-        _draw(cv, _read(_layers[f + 20 + bg]), -int256(seed % 37), -int256((seed >> 8) % 37), slot, 0);
+        _draw(cv, _read(_layers[faceLayers + 20 + bg]), -int256(seed % 37), -int256((seed >> 8) % 37), slot, 0);
+        _fren(cv, combo);
+    }
+
+    /// @dev The fren itself, over whatever `cv` holds: face, coat, hat, item, its slots filled from its combo
+    function _fren(bytes memory cv, uint24 combo) internal view {
+        uint256 ch = combo & 3;
+        uint256 face = (combo >> 2) & 15;
+        bytes memory t = _tables;
+        uint8[8] memory slot;
+        uint256 coat = (combo >> 8) & 3;
+        uint256 shirt = (combo >> 10) & 7;
+        uint256 eye = (combo >> 6) & 3;
+        for (uint256 i; i < 5; ++i) slot[i] = uint8(t[8 + coat * 5 + i]);
+        slot[5] = uint8(t[23 + shirt]);
+        slot[6] = uint8(t[eye * 2]);
+        slot[7] = uint8(t[eye * 2 + 1]);
+        uint256 f = faceLayers;
         _draw(cv, _read(_layers[uint8(_faceTable[ch * FACES + face])]), -int256(CX), -int256(CY), slot, 0);
         _draw(cv, _read(_layers[f + ch]), -int256(CX), -int256(CY), slot, 0);
         uint256 hat = (combo >> 13) & 3;
@@ -293,6 +342,13 @@ contract FrenRendererRef {
                 }
                 x += n;
             }
+        }
+    }
+
+    /// @dev `len` bytes of `from` (from `fromAt`) into `to` (at `at`)
+    function _copy(bytes memory to, uint256 at, bytes memory from, uint256 fromAt, uint256 len) internal pure {
+        assembly ("memory-safe") {
+            mcopy(add(add(to, 32), at), add(add(from, 32), fromAt), len)
         }
     }
 
